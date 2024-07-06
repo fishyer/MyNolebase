@@ -9,10 +9,11 @@ import Git from 'simple-git'
 import matter from 'gray-matter'
 import uniq from 'lodash/uniq'
 import TagsAlias from '../.vitepress/docsTagsAlias.json'
-import type { DocsMetadata, DocsTagsAlias, Tag } from './types/metadata'
+import type { ArticleTree, DocsMetadata, DocsTagsAlias, Tag } from './types/metadata'
 
 const dir = './'
 const target = '笔记/'
+const folderTop = true
 
 export const DIR_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const DIR_VITEPRESS = resolve(dirname(fileURLToPath(import.meta.url)), '../.vitepress')
@@ -21,11 +22,13 @@ const git = Git(DIR_ROOT)
 
 /**
  * 列出所有的页面
- * @param dir
- * @param options
- * @returns
+ * @param dir 目录
+ * @param options 选项
+ * @param options.target 目标
+ * @param options.ignore 忽略
+ * @returns 符合 glob 的文件列表
  */
-export async function listPages(dir: string, options: { target?: string; ignore?: string[] }) {
+export async function listPages(dir: string, options: { target?: string, ignore?: string[] }) {
   const {
     target = '',
     ignore = [],
@@ -48,12 +51,12 @@ export async function listPages(dir: string, options: { target?: string; ignore?
 
 /**
  * 添加和计算路由项
- * @param indexes
- * @param path
- * @param upgradeIndex
- * @returns
+ * @param indexes 路由树
+ * @param path 路径
+ * @param upgradeIndex 是否升级 index
+ * @returns 路由树
  */
-async function addRouteItem(indexes: any[], path: string, upgradeIndex = false) {
+async function addRouteItem(indexes: ArticleTree[], path: string, upgradeIndex = false) {
   const suffixIndex = path.lastIndexOf('.')
   const nameStartsAt = path.lastIndexOf('/') + 1
   const title = path.slice(nameStartsAt, suffixIndex)
@@ -79,19 +82,22 @@ async function addRouteItem(indexes: any[], path: string, upgradeIndex = false) 
 
 /**
  * 递归式添加和计算路由项
- * @param indexes
- * @param item
- * @param path
- * @param upgradeIndex
- * @returns
+ * @param indexes 路由树
+ * @param item 路由项
+ * @param path 路径
+ * @param upgradeIndex 是否升级 index
+ * @returns 路由树
  */
-function addRouteItemRecursion(indexes: any[], item: any, path: string[], upgradeIndex: boolean) {
+function addRouteItemRecursion(indexes: ArticleTree[], item: any, path: string[], upgradeIndex: boolean) {
   if (path.length === 1) {
     indexes.push(item)
     return indexes
   }
   else {
     const onePath = path.shift()
+    if (!onePath)
+      return indexes
+
     let obj = indexes.find(obj => obj.index === onePath)
 
     if (!obj) {
@@ -112,7 +118,7 @@ function addRouteItemRecursion(indexes: any[], item: any, path: string[], upgrad
     }
     else {
       // 否则，递归遍历
-      obj.items = addRouteItemRecursion(obj.items, item, path, upgradeIndex)
+      obj.items = addRouteItemRecursion(obj.items ?? [], item, path, upgradeIndex)
     }
 
     return indexes
@@ -131,15 +137,58 @@ async function processSidebar(docs: string[], docsMetadata: DocsMetadata) {
 }
 
 /**
+ * 排序传入的ArticleTree数组
+ * @param articleTree 需要排序的ArticleTree数组
+ * @return 排序后的结果
+ */
+function articleTreeSort(articleTree: ArticleTree[]) {
+  articleTree.sort((itemA, itemB) => {
+    return itemA.text.localeCompare(itemB.text)
+  })
+  return articleTree
+}
+
+/**
+ * 排序sidebar,返回新的sidebar数组
+ * @param sidebar 需要排序的ArticleTree数组
+ * @param folderTop 是否优先排序文件夹
+ * @returns ArticleTree[] 排序好了的数组
+ */
+function sidebarSort(sidebar: ArticleTree[], folderTop: boolean = true) {
+  let _sideBar
+  if (folderTop) {
+    // 分别找出直接的文件和嵌套文件夹
+    const files = articleTreeSort(sidebar.filter((item) => {
+      return !item.items || item.items.length === 0
+    }))
+    const folders = articleTreeSort(sidebar.filter((item) => {
+      return item.items && item.items.length > 0
+    }))
+    // 然后在排序完成后合并为新的数组
+    _sideBar = [...folders, ...files]
+  }
+  else {
+    _sideBar = articleTreeSort(sidebar)
+  }
+
+  // 如果有子菜单就递归排序每个子菜单
+  for (const articleTree of _sideBar) {
+    if (articleTree.items && articleTree.items.length > 0)
+      articleTree.items = sidebarSort(articleTree.items, folderTop)
+  }
+  return _sideBar
+}
+
+/**
  * 判断 srcTag 是否是 targetTag 的别名
  *
  * 判断根据下面的规则进行：
  * 1. srcTag === targetTag
  * 2. srcTag.toUpperCase() === targetTag.toUpperCase()
  *
- * @param srcTag
- * @param targetTag
- * @returns
+ * @param srcTag 原始 tag
+ * @param targetTag 目标 tag
+ * @returns 是否是别名
  */
 function isTagAliasOfTag(srcTag: string, targetTag: string) {
   return srcTag === targetTag || srcTag.toUpperCase() === targetTag.toUpperCase()
@@ -238,7 +287,7 @@ async function processDocs(docs: string[], docsMetadata: DocsMetadata) {
   if (!docsMetadata.docs)
     docsMetadata.docs = []
 
-  const tagsToBeProcessed: { doc: string; tags: string[] }[] = []
+  const tagsToBeProcessed: { doc: string, tags: string[] }[] = []
 
   docsMetadata.docs = docs.map((docPath) => {
     // 尝试在 docsMetadata.docs 中找到当前文件的历史 hash 记录
@@ -306,6 +355,10 @@ async function run() {
 
   await processSidebar(docs, docsMetadata)
   console.log('processed sidebar in', `${(new Date()).getTime() - now}ms`)
+  now = (new Date()).getTime()
+
+  docsMetadata.sidebar = sidebarSort(docsMetadata.sidebar, folderTop)
+  console.log('processed sidebar sort in', `${(new Date()).getTime() - now}ms`)
 
   await fs.writeJSON(join(DIR_VITEPRESS, 'docsMetadata.json'), docsMetadata, { spaces: 2 })
 }

@@ -1,38 +1,49 @@
-import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
-import process from 'node:process'
 import { defineConfig } from 'vite'
 import Components from 'unplugin-vue-components/vite'
 import UnoCSS from 'unocss/vite'
-import { getChangeLog } from './scripts/changelog'
-import { ChangeLog } from './.vitepress/plugins/changelog'
-import { MarkdownTransform } from './.vitepress/plugins/markdownTransform'
-import { EasyTag } from './.vitepress/plugins/vitepress-plugin-docsmd-easytag/src'
-import { include } from './.vitepress/meta'
+import Inspect from 'vite-plugin-inspect'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+import { GitChangelog, GitChangelogMarkdownSection } from '@nolebase/vitepress-plugin-git-changelog/vite'
+import { PageProperties, PagePropertiesMarkdownSection } from '@nolebase/vitepress-plugin-page-properties/vite'
+import { ThumbnailHashImages } from '@nolebase/vitepress-plugin-thumbnail-hash/vite'
+
+import { githubRepoLink } from './metadata'
 
 export default defineConfig(async () => {
-  const [changeLog] = await Promise.all([
-    getChangeLog(800),
-  ])
-
   return {
     assetsInclude: ['**/*.mov'],
     optimizeDeps: {
       // vitepress is aliased with replacement `join(DIST_CLIENT_PATH, '/index')`
       // This needs to be excluded from optimization
-      exclude: ['vitepress'],
+      exclude: [
+        'vitepress',
+      ],
     },
     plugins: [
-      EasyTag({
-        rootDir: ROOT,
-        includes: [...include],
-        openAIAPISecret: process.env.OPENAI_API_SECRET!,
-        openAIAPIHost: process.env.OPENAI_API_HOST!,
+      Inspect(),
+      GitChangelog({
+        repoURL: () => githubRepoLink,
       }),
-      MarkdownTransform(),
-      ChangeLog(changeLog),
+      GitChangelogMarkdownSection({
+        getChangelogTitle: (): string => {
+          return '文件历史'
+        },
+        getContributorsTitle: (): string => {
+          return '贡献者'
+        },
+        excludes: [
+          'toc.md',
+          'index.md',
+        ],
+      }),
+      PageProperties(),
+      PagePropertiesMarkdownSection({
+        excludes: [
+          'toc.md',
+          'index.md',
+        ],
+      }),
+      ThumbnailHashImages(),
       Components({
         include: [/\.vue$/, /\.md$/],
         dirs: '.vitepress/theme/components',
@@ -41,7 +52,11 @@ export default defineConfig(async () => {
       UnoCSS(),
     ],
     ssr: {
-      noExternal: ['@nolebase/vitepress-plugin-enhanced-readabilities'],
+      noExternal: [
+        '@nolebase/vitepress-plugin-enhanced-readabilities',
+        '@nolebase/vitepress-plugin-highlight-targeted-heading',
+        '@nolebase/vitepress-plugin-inline-link-preview',
+      ],
     },
   }
 })
